@@ -11,8 +11,9 @@ env/
 # Python cache
 __pycache__/
 *.py[cod]
+*.pyo
 
-# Testing
+# Testing / coverage
 .pytest_cache/
 .coverage
 htmlcov/
@@ -25,14 +26,21 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
-# Logs
-*.log
+# Python tooling
+.mypy_cache/
+.ruff_cache/
 
-# Local databases
+# Database
 *.db
 *.sqlite
 *.sqlite3
 
+# Logs
+*.log
+
 # Generated files
+audio_responses/
+
+# Generated datasets / local outputs
 generated_states.csv
 generated_decisions.csv
