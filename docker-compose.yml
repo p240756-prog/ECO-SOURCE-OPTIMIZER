@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: ecosourceoptimizer-postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ecosourceoptimizer
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 1234fasi
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:

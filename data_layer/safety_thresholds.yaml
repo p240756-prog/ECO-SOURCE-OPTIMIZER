@@ -1,0 +1,69 @@
+# =====================================================================
+# safety_thresholds.yaml
+# Week 1 — Rule Design: safety thresholds & switching guardrails
+# ---------------------------------------------------------------------
+# These are the ENFORCEABLE limits the rule engine checks before it
+# recommends a source. They are intentionally in one file so ops can
+# tune them without touching code. Every value has a one-line rationale.
+# =====================================================================
+
+version: "1.0"
+
+# ---------------------------------------------------------------------
+# Battery State of Charge (SoC) thresholds — % 
+# ---------------------------------------------------------------------
+battery:
+  soc_reserve_pct: 20          # never discharge below this — protects cell life
+  soc_critical_pct: 15         # emergency floor — force generator if grid down
+  soc_start_generator_pct: 25  # begin generator start BEFORE hitting critical
+  soc_healthy_pct: 50          # above this, battery may bridge short outages
+  soc_full_pct: 95             # treat as full; stop forcing charge
+  soh_min_pct: 70              # below this SoH, derate usable capacity / flag
+  # usable capacity = nominal * (SoH/100); discharge only down to soc_reserve.
+
+# ---------------------------------------------------------------------
+# Grid quality gates — decide if grid is trustworthy as a source
+# ---------------------------------------------------------------------
+grid:
+  accept_status: ["Up"]                 # only 'Up' is auto-usable as primary
+  bridge_on_status: ["Unstable"]        # 'Unstable' => bridge on battery, don't switch to grid
+  reject_status: ["Down"]               # 'Down' => grid unavailable
+  # frequency band (Hz) — for sites that report frequency; else status-only
+  frequency_nominal_hz: 50.0
+  frequency_tolerance_hz: 1.0           # 49.0–51.0 acceptable; outside => Unstable
+
+# ---------------------------------------------------------------------
+# Generator & fuel thresholds — litres
+# ---------------------------------------------------------------------
+generator:
+  fuel_min_run_l: 10.0         # below this, generator cannot be relied upon
+  fuel_refuel_alert_l: 25.0    # raise refuel alert; still runnable
+  fuel_theft_drop_lph: 8.0     # fuel drop >8 L/h with generator OFF => theft suspect
+  min_run_minutes: 30          # once started, run at least this long (anti-cycling)
+  max_load_fraction: 0.8       # don't load generator beyond 80% of capacity
+
+# ---------------------------------------------------------------------
+# Telemetry staleness — seconds (mirrors freshness_s in dictionary)
+# ---------------------------------------------------------------------
+staleness:
+  safety_signal_max_age_s: 5400   # 1.5 ticks; older safety signal => stale
+  hold_last_known_safe: true      # on stale, hold last safe source, no switch
+  set_stale_data_flag: true       # and raise SENSOR_DROPOUT / stale_data_flag
+
+# ---------------------------------------------------------------------
+# Switching frequency — protect hardware from thrashing
+# ---------------------------------------------------------------------
+switching:
+  min_dwell_minutes: 30        # stay on a source at least this long before switching
+  max_switches_per_hour: 3     # hard cap on source changes per hour
+  max_switches_per_day: 12     # daily cap; excess => flag for review
+  hysteresis_soc_pct: 5        # require SoC to move >5% past a threshold to flip back
+  cost_switch_margin_pct: 10   # only switch for cost if savings > 10% (avoid churn)
+
+# ---------------------------------------------------------------------
+# Alarm triggers (informational -> action mapping)
+# ---------------------------------------------------------------------
+alarms:
+  QOS_BREACH:        "log + prioritise uptime; no automatic source change on QoS alone"
+  FUEL_THEFT_SUSPECTED: "raise security review; do NOT auto-change source"
+  SENSOR_DROPOUT:    "hold last-known-safe source; flag stale; no action on bad input"

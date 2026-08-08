@@ -1,0 +1,5 @@
+site_id,timestamp,error_code,error_message
+ISB-000,2026-07-05T00:00:00+00:00,SOC_RATE_VIOLATION,battery SoC changed 99.5 % in 15.0 min (6.63 %/min > max 5.0 %/min)
+ISB-002,2026-07-05T00:00:00+00:00,SOC_RATE_VIOLATION,battery SoC changed 97.2 % in 15.0 min (6.48 %/min > max 5.0 %/min)
+ISB-004,2026-07-03T00:00:00+00:00,SOC_RATE_VIOLATION,battery SoC changed 96.7 % in 15.0 min (6.44 %/min > max 5.0 %/min)
+ISB-005,2026-07-05T00:00:00+00:00,SOC_RATE_VIOLATION,battery SoC changed 97.2 % in 15.0 min (6.48 %/min > max 5.0 %/min)

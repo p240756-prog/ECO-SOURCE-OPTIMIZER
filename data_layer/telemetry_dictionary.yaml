@@ -1,0 +1,279 @@
+# =====================================================================
+# telemetry_dictionary.yaml
+# Week 1 — Telemetry Mapping (Discovery / Rule Design)
+# ---------------------------------------------------------------------
+# Single source of truth for every telemetry SIGNAL the rule engine and
+# models consume. This file describes the DATA (units, ranges, freshness,
+# missing-data handling). Site METADATA (coordinates, capacities, feeder)
+# lives separately in site_metadata.yaml — keep the two apart on purpose:
+#   - telemetry  = time-varying measurements (per record)
+#   - metadata   = static per-site facts (per site)
+#
+# freshness_s      : max age (seconds) before a value is considered STALE.
+# on_missing       : what the pipeline does when the field is null/absent.
+# criticality      : "safety" fields can trigger source switches directly;
+#                    "context" fields inform cost/quality only.
+# maps_to_column   : column in telemetry_dataset.csv / TelemetryRecord.
+# =====================================================================
+
+meta:
+  version: "1.0"
+  timezone_note: "Timestamps stored UTC; tariff windows evaluated in PKT (UTC+5)."
+  cadence_s: 3600            # nominal one record per hour per site
+  schema_columns_total: 29
+
+# ---------------------------------------------------------------------
+# 1. IDENTITY & TIME
+# ---------------------------------------------------------------------
+signals:
+
+  site_id:
+    telemetry_area: "Identity"
+    purpose: "Identify which tower/site the record belongs to."
+    unit: "string (e.g. ISB-000)"
+    acceptable_range: "non-empty; must exist in site_metadata.yaml"
+    freshness_s: null
+    criticality: "key"
+    on_missing: "reject_record"       # cannot be quarantined into a site otherwise
+    maps_to_column: "site_id"
+
+  timestamp:
+    telemetry_area: "Timestamp / tariff period"
+    purpose: "Map decision windows to peak / off-peak tariff rates."
+    unit: "ISO-8601 datetime, UTC"
+    acceptable_range: "monotonic per site; no future timestamps"
+    freshness_s: 5400                 # <=1.5 ticks old, else stale
+    criticality: "safety"
+    on_missing: "reject_record"
+    maps_to_column: "timestamp"
+
+  tariff_type:
+    telemetry_area: "Timestamp / tariff period"
+    purpose: "Classify current pricing window."
+    unit: "enum {Off-Peak, Normal, Peak}"
+    acceptable_range: "one of the enum values"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_timestamp"   # tariff_source.get_tariff(hour_pkt)
+    maps_to_column: "tariff_type"
+
+  electricity_price:
+    telemetry_area: "Grid kW / kWh"
+    purpose: "Cost impact of using grid at this hour."
+    unit: "PKR/kWh"
+    acceptable_range: "20.0 – 80.0 (NEPRA ToU envelope)"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_tariff_type"
+    maps_to_column: "electricity_price"
+
+# ---------------------------------------------------------------------
+# 2. SOLAR
+# ---------------------------------------------------------------------
+  solar_power_kw:
+    telemetry_area: "Solar kW / kWh"
+    purpose: "Detect solar availability and calculate solar contribution."
+    unit: "kW"
+    acceptable_range: "0.0 – 12.0 (per installed panel capacity)"
+    freshness_s: 3600
+    criticality: "safety"             # drives 'solar-first' priority
+    on_missing: "assume_zero"         # fail safe: no free solar assumed
+    maps_to_column: "solar_power_kw"
+
+  solar_irradiance:
+    telemetry_area: "Solar kW / kWh"
+    purpose: "Physical driver / cross-check for solar_power_kw."
+    unit: "W/m^2"
+    acceptable_range: "0.0 – 1100.0"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_weather_model"
+    maps_to_column: "solar_irradiance"
+
+# ---------------------------------------------------------------------
+# 3. BATTERY
+# ---------------------------------------------------------------------
+  battery_soc_pct:
+    telemetry_area: "Battery SoC / SoH"
+    purpose: "Whether battery can safely discharge right now."
+    unit: "% (state of charge)"
+    acceptable_range: "0.0 – 100.0"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "hold_last_known_safe" # never guess up; use last good value
+    maps_to_column: "battery_soc_pct"
+
+  battery_soh_pct:
+    telemetry_area: "Battery SoC / SoH"
+    purpose: "Estimate usable capacity / ageing derate."
+    unit: "% (state of health)"
+    acceptable_range: "60.0 – 100.0"
+    freshness_s: 86400                # SoH drifts slowly; daily is fine
+    criticality: "context"
+    on_missing: "default_100_flag"
+    maps_to_column: "battery_soh_pct"
+
+  battery_voltage:
+    telemetry_area: "Battery SoC / SoH"
+    purpose: "Secondary health/discharge sanity check."
+    unit: "V"
+    acceptable_range: "42.0 – 56.0 (48V nominal string)"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_soc"
+    maps_to_column: "battery_voltage"
+
+  battery_status:
+    telemetry_area: "Battery SoC / SoH"
+    purpose: "Current battery mode."
+    unit: "enum {Charging, Discharging, Idle}"
+    acceptable_range: "one of the enum values"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_soc_delta"
+    maps_to_column: "battery_status"
+
+# ---------------------------------------------------------------------
+# 4. GRID
+# ---------------------------------------------------------------------
+  grid_status:
+    telemetry_area: "Grid status / frequency"
+    purpose: "Grid availability & quality before selecting grid source."
+    unit: "enum {Up, Down, Unstable}"
+    acceptable_range: "one of the enum values"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "assume_down"         # fail safe: don't rely on grid we can't see
+    maps_to_column: "grid_status"
+
+# ---------------------------------------------------------------------
+# 5. GENERATOR & FUEL
+# ---------------------------------------------------------------------
+  generator_state:
+    telemetry_area: "Generator status / kW / fuel level"
+    purpose: "Generator availability & running state."
+    unit: "enum {Off, Starting, Running}"
+    acceptable_range: "one of the enum values"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "assume_off"
+    maps_to_column: "generator_state"
+
+  generator_power_kw:
+    telemetry_area: "Generator status / kW / fuel level"
+    purpose: "Generator load contribution."
+    unit: "kW"
+    acceptable_range: "0.0 – 15.0"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "assume_zero"
+    maps_to_column: "generator_power_kw"
+
+  fuel_level_l:
+    telemetry_area: "Generator status / kW / fuel level"
+    purpose: "Fuel risk — can the generator actually run?"
+    unit: "litres"
+    acceptable_range: "0.0 – 150.0 (tank capacity)"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "hold_last_known_safe"
+    maps_to_column: "fuel_level_l"
+
+  fuel_consumption_lph:
+    telemetry_area: "Fuel consumption rate"
+    purpose: "Generator cost/kWh, diesel savings, theft detection."
+    unit: "litres/hour"
+    acceptable_range: "0.0 – 20.0"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_oem_curve"
+    maps_to_column: "fuel_consumption_lph"
+
+# ---------------------------------------------------------------------
+# 6. LOAD & SERVICE QUALITY
+# ---------------------------------------------------------------------
+  load_kw:
+    telemetry_area: "Total load kW"
+    purpose: "Site demand & required source capacity."
+    unit: "kW"
+    acceptable_range: "0.0 – 20.0"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "hold_last_known_safe"
+    maps_to_column: "load_kw"
+
+  traffic_load_pct:
+    telemetry_area: "Total load kW (driver)"
+    purpose: "Cellular traffic shape driving load."
+    unit: "%"
+    acceptable_range: "0.0 – 100.0"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "derive_from_traffic_model"
+    maps_to_column: "traffic_load_pct"
+
+  qos_score:
+    telemetry_area: "Service quality"
+    purpose: "Detect QoS breach / congestion incidents."
+    unit: "score 0–100"
+    acceptable_range: "0.0 – 100.0"
+    freshness_s: 3600
+    criticality: "context"
+    on_missing: "default_100_flag"
+    maps_to_column: "qos_score"
+
+# ---------------------------------------------------------------------
+# 7. ENVIRONMENT
+# ---------------------------------------------------------------------
+  temperature:
+    telemetry_area: "Environment"
+    purpose: "Battery derate & cooling-load driver."
+    unit: "°C"
+    acceptable_range: "-5.0 – 55.0"
+    freshness_s: 7200
+    criticality: "context"
+    on_missing: "derive_from_weather_model"
+    maps_to_column: "temperature"
+
+  humidity:
+    telemetry_area: "Environment"
+    purpose: "Secondary environmental confounder."
+    unit: "%"
+    acceptable_range: "0.0 – 100.0"
+    freshness_s: 7200
+    criticality: "context"
+    on_missing: "derive_from_weather_model"
+    maps_to_column: "humidity"
+
+# ---------------------------------------------------------------------
+# 8. DECISION / OBSERVABILITY (outputs & flags, not raw telemetry)
+# ---------------------------------------------------------------------
+  alarm_codes:
+    telemetry_area: "Observability"
+    purpose: "Active alarms (may be empty, never null)."
+    unit: "enum set {NONE, QOS_BREACH, FUEL_THEFT_SUSPECTED, SENSOR_DROPOUT}"
+    acceptable_range: "subset of enum"
+    freshness_s: 3600
+    criticality: "safety"
+    on_missing: "default_NONE"
+    maps_to_column: "alarm_codes"
+
+  source:
+    telemetry_area: "Current active source"
+    purpose: "Compare recommendation against actual site behaviour."
+    unit: "enum {Real, Synthetic}  (provenance tag)"
+    acceptable_range: "one of the enum values"
+    freshness_s: null
+    criticality: "context"
+    on_missing: "default_Synthetic"
+    maps_to_column: "source"
+
+  stale_data_flag:
+    telemetry_area: "Freshness"
+    purpose: "True when any safety signal exceeded its freshness_s."
+    unit: "bool"
+    acceptable_range: "{True, False}"
+    freshness_s: null
+    criticality: "safety"
+    on_missing: "default_False"
+    maps_to_column: "stale_data_flag"
